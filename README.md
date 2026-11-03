@@ -45,10 +45,16 @@
 
 ```sh
 cd ~/.dsh/profiles/desktop
-pnpm add link:/path/to/dsh-better-model-selector
+pnpm add git+https://github.com/Asaiuta/dsh-better-model-selector.git
 # 然后在 package.json 的 dsh.profile.bundles 里加上 "dsh-better-model-selector"
 # 重启 DSH
 ```
+
+本地改代码调试时换成 `pnpm add link:/path/to/dsh-better-model-selector`。
+
+> 本插件**没有发布到 npm**：`dsh-better-model-selector` 这个名字在 npm 上已经属于另一个
+> 同领域但实现不同的插件（[Khellendros97/dsh-better-model-selector](https://github.com/Khellendros97/dsh-better-model-selector)），
+> 所以只从 GitHub 装。
 
 装好之后日志里会有这么几行，可以拿来确认它在干活：
 
