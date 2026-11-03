@@ -19,20 +19,24 @@ test('asar 候选：桌面版的命令行里带 asar，两种写法都要认', (
 });
 
 test('asar 候选：显式配置 > 环境变量 > resourcesPath > argv > 可执行文件旁 > 工作目录', () => {
+  // cwd 要用 resolve 出来的真路径：`D:/work/deep` 在 POSIX 上不是绝对路径，
+  // 会被 path.resolve 当成相对路径拼到当前工作目录后面，断言就永远不成立。
+  const deep = path.resolve('work', 'deep');
   const list = asarCandidates({
     explicit: 'D:/explicit/app.asar',
     env: { DSH_ASAR_PATH: 'D:/env/app.asar' },
     resourcesPath: 'D:/electron/resources',
     argv: ['node', 'D:/argv/app.asar'],
     execPath: 'D:/app/DSH.exe',
-    cwd: 'D:/work/deep',
+    cwd: deep,
   });
   assert.equal(list[0], 'D:/explicit/app.asar');
   assert.equal(list[1], 'D:/env/app.asar');
   assert.equal(list[2], path.join('D:/electron/resources', 'app.asar'), 'resourcesPath 拼出来的是平台路径');
   assert.ok(list.includes('D:/argv/app.asar'), 'argv 里出现过的 asar 要收进来');
   assert.ok(list.includes(path.join('D:/app', 'resources', 'app.asar')), '可执行文件旁边的标准布局');
-  assert.ok(list.includes(path.join('D:/work', 'app.asar')), '工作目录兜底');
+  assert.ok(list.includes(path.join(deep, 'app.asar')), '工作目录本身');
+  assert.ok(list.includes(path.join(path.dirname(deep), 'app.asar')), '往上找一层');
 });
 
 test('asar 候选：什么都没给就是空列表，不编路径', () => {
