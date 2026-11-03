@@ -1,0 +1,64 @@
+{
+  "name": "dsh-better-model-selector",
+  "version": "0.7.0",
+  "private": false,
+  "author": "Asaiuta",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Asaiuta/dsh-better-model-selector.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Asaiuta/dsh-better-model-selector/issues"
+  },
+  "homepage": "https://github.com/Asaiuta/dsh-better-model-selector#readme",
+  "description": "Per-model reasoning efforts and a context-length switcher for the DSH model selector, aligned with the built-in official pi-ai catalog. No endpoint probing, no network requests.",
+  "type": "module",
+  "main": "lib/index.mjs",
+  "exports": {
+    ".": "./lib/index.mjs",
+    "./client": "./lib/client.js",
+    "./sync": "./lib/sync.mjs",
+    "./catalog": "./lib/catalog.mjs",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-better-model-selector": "./bin/sync.mjs"
+  },
+  "files": [
+    "lib",
+    "bin",
+    "cordis.patch.yml",
+    "README.md",
+    "DEVELOPMENT.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "sync:dry": "node bin/sync.mjs --dry-run"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-model-selection",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "reasoning-effort",
+    "thinking",
+    "context-window",
+    "pi-ai"
+  ],
+  "license": "MIT"
+}

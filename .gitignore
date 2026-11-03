@@ -1,0 +1,11 @@
+node_modules/
+*.bak-*
+*.bak
+dist/
+*.log
+.DS_Store
+Thumbs.db
+
+# 本地同步脚本产出的临时文件
+scratch/
+_scratch/

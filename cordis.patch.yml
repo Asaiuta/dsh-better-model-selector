@@ -1,0 +1,9 @@
+# dsh-better-model-selector bundle patch。
+#
+# 入口写**包名**而不是相对路径：client-modules 挂浏览器半边时要沿 row 的模块位置
+# 往上找「最近一个声明了该包名的 package.json」，裸包名解析出来的路径必定落在
+# node_modules/dsh-better-model-selector 里；本 profile 里其它插件也全是这个写法。
+# 浏览器半边不走这里，由 package.json 的 `dsh.client` + `exports["./client"]` 声明。
+- insert:
+    - id: better-selector
+      name: dsh-better-model-selector
