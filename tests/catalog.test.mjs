@@ -8,7 +8,9 @@ import path from 'node:path';
 import { asarCandidates, resolveAsarPath, loadCatalogEntries } from '../lib/catalog.mjs';
 
 test('asar 候选：桌面版的命令行里带 asar，两种写法都要认', () => {
-  const asar = 'F:/DSH-NEXT/DSH NEXT/resources/app.asar';
+  // 用泛化路径，别把本机安装位置写进公开仓库——这里的断言只关心路径形态。
+  // 保留中间的空格：宿主装在有空格或中文名的目录里时，这条正则也得认。
+  const asar = 'D:/Programs/DSH NEXT/resources/app.asar';
   const fromHostJs = asarCandidates({
     argv: ['node', `${asar}/lib/host.js`, asar, 'C:/profile'],
   });
