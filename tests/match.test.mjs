@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeId, familyOf, buildIndex, matchModel } from '../lib/match.mjs';
+import { mapToEfforts } from '../lib/efforts.mjs';
 
 const entry = (id, map, api = 'openai-completions', extra = {}) => ({
   id,
@@ -31,6 +32,7 @@ test('归一化：剥渠道后缀（-coding / -free / -high / -次），但不�
   assert.equal(normalizeId('deepseek-v4.1-flash-free'), 'deepseek-v4.1-flash');
   assert.equal(normalizeId('gemini-3.8-flash-high'), 'gemini-3.8-flash');
   assert.equal(normalizeId('deepseek-v4.1-flash-次'), 'deepseek-v4.1-flash');
+  assert.equal(normalizeId('claude-fable-5-1-reversed'), 'claude-fable-5-1', '逆向渠道的标记，不是模型自身的词');
   assert.equal(normalizeId('kimi-k2.7-code'), 'kimi-k2.7-code');
   assert.equal(normalizeId('gpt-6.1-sol'), 'gpt-6.1-sol');
 });
@@ -73,7 +75,22 @@ test('协议对不上且两种签名票数相同，取交集而不是取最全',
     entry('gpt-6.1-sol', { off: null, low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' }, 'openai-responses'),
   ]);
   const hit = matchModel('gpt-6.1-sol', index, { api: 'openai-completions' });
-  assert.deepEqual(hit.entry.thinkingLevelMap, { off: null, xhigh: 'xhigh' });
+  // 第一条展开后是 low / medium / high / xhigh，第二条多一个 max：交集不含 max。
+  assert.deepEqual(mapToEfforts(hit.entry), { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' });
+});
+
+test('写法不同但意思相同的记录算同一票（Claude 的官方记录就是这样）', () => {
+  const terse = { xhigh: 'xhigh', max: 'max' };
+  const spelled = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' };
+  const narrow = { off: null, minimal: null, low: null, medium: null, high: 'high', xhigh: null, max: 'max' };
+  const index = buildIndex([
+    entry('claude-opus-5-5', terse, 'anthropic-messages'),
+    entry('claude-opus-5-5', spelled, 'anthropic-messages'),
+    entry('claude-opus-5-5', narrow, 'anthropic-messages'),
+  ]);
+  const hit = matchModel('claude-opus-5-5', index, { api: 'anthropic-messages' });
+  // 按字面是三派各一票、交集只剩 high / max；按展开后的口径是 2 : 1。
+  assert.deepEqual(mapToEfforts(hit.entry), { off: null, low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' });
 });
 
 test('同 id 多条目票数不等时取票数最多的签名（deepseek-v4-pro 的真实形态）', () => {

@@ -3,19 +3,21 @@
 面向改这个插件的人。用户文档在 [README.md](README.md)。
 
 名字说的是"模型选择器变好了"，但**真正决定档位对错的在主机半边**：它去本机 `app.asar` 里读官方目录，
-按官方范围改配置；浏览器半边只是把结果画出来，另外多给一行「上下文长度」。
+按官方范围改配置；浏览器半边只是把结果画出来，另外多给「上下文长度」「视觉」两行。
 所以 asar 找不到、插件被停用的时候，选择器看着还在，档位却是错的——这是两个半边的关系。
 
 ## 行为契约
 
 1. **只抄官方范围**：档位集合与发送值来自 pi-ai 内置的 `thinkingLevelMap`，容量来自同一条记录的 `contextWindow` / `maxTokens`，不做任何推断性补档或倍增。
-2. **同名多通道取众数**：官方目录里同一模型常有多个通道版本（`deepseek-v4-pro` 有 8 条），票数最多的签名胜出；平局取交集；交集为空则不动。
+   「官方范围」按 pi-ai 的缺省规则展开后再写（见下节），不按字面抄。
+2. **同名多通道取众数**：官方目录里同一模型常有多个通道版本（`deepseek-v4-pro` 有 8 条），票数最多的签名胜出；平局取交集；交集为空则不动。签名同样按展开后的口径算。
 3. **认不出就不动**：官方目录里没有、族内档位又互相矛盾的模型，保持配置原样，不猜。
 4. **不发网络请求**：数据全部来自本机 app.asar，插件运行期零请求。
 
 配套的编辑约束：
 
 - 只改目标模型的 `reasoningEfforts` 块与 `contextWindow` / `maxTokens` 两行，`compat` / `input` / `name` / 注释逐字节保留
+  （`input` 只由浏览器半边的「视觉」行经 `settings/mutate` 写，主机半边从不碰它，两边不会互相覆盖）
 - 写盘前回读校验（provider / 模型数必须不变），并自动备份最近 5 份
 - 幂等：同一份配置跑第二遍零改动
 
@@ -35,39 +37,68 @@
 命令行参数（桌面版用 `electron host.js <app.asar> …` 起宿主进程，asar 就在 argv 里）>
 可执行文件旁边的 `resources/app.asar` > 工作目录往上找。都不中才停用，并把试过的位置打进日志。
 
+## 官方表 → 配置：两边对「没写」的解释相反
+
+这是最容易抄错的地方（0.1.0 就抄错了：Claude 只剩 `xhigh` / `max` 两档，`gpt-5` 被判成没档位）。
+
+| 档 | 官方 `thinkingLevelMap` 没写 | 官方写 `null` | 配置 `reasoningEfforts` 没写 | 配置写 `null` |
+|---|---|---|---|---|
+| off | 支持，不发参数 | **关不掉思考** | 不支持 | 支持，不发参数 |
+| minimal / low / medium / high | 支持，发档名（minimal 因协议而异） | 不支持 | 不支持 | 非法 |
+| xhigh / max | 不支持 | 不支持 | 不支持 | 非法 |
+
+依据：pi-ai `getSupportedThinkingLevels`（`mapped === null` 一律剔除；xhigh/max 要求有键，其余缺省为真），
+以及 dsh `resolveModelReasoning` 的注释（配置是白名单，未声明的档 pin 成 `null`）。
+
+`lib/efforts.mjs` 的 `resolveLevels` 按左两列展开成「每档确定的发送值」，再按右两列写成白名单：
+
+| 官方表 | 写进配置 |
+|---|---|
+| `{ xhigh, max }`（Claude） | `off: null, low, medium, high, xhigh, max` |
+| `{ off: null, xhigh, max }`（Fable） | `low, medium, high, xhigh, max` |
+| `{ off: null }`（gpt-5） | `low, medium, high` |
+| `{ off: null, minimal: null, low: null, medium: null, high, max }`（deepseek） | `high, max` |
+
+没写的 `minimal` **不补**：Anthropic / GPT 的适配器把它发成 `low`，Google 等发 `minimal`，
+白名单里只能写一个值，写哪个都会在另一类网关上发错。
+
 ## 匹配顺序
 
 | 顺序 | 方式 | 例子 |
 |---|---|---|
 | 1 | 原 id 精确 | `gpt-6.1-sol` |
-| 2 | 归一化后精确 | `[free]deepseek-v4.1-flash` → `deepseek-v4.1-flash`；`z-ai/glm-5.3` → `glm-5.3`；`deepseek-v4.1-flash-coding` 剥掉 `-coding` |
+| 2 | 归一化后精确 | `[free]deepseek-v4.1-flash` → `deepseek-v4.1-flash`；`z-ai/glm-5.3` → `glm-5.3`；`deepseek-v4.1-flash-coding` 剥掉 `-coding`；`claude-fable-5-1-reversed` 剥掉 `-reversed` |
 | 3 | 家族回退（同族同版本、且族内多数签名一致） | `deepseek-v4.1-flash-1017` → 借 `deepseek-v4.1-flash` |
 | 4 | 都不中 | 保持原样，日志点名 |
 
-## 界面：模型面板的第三行
+## 界面：模型面板的第三、四行
 
 宿主的根面板本来是两行：**模型** / **推理等级**（`model-selection-client.js` 里两格
 `button.cell[role="menuitem"]` 硬编码在 JSX，没有任何座位能往里加第三格）。
 所以插件挂在**模型选择器自己声明、自己渲染**的标题座位
 `conversation.input.model.label`（`kind: single`、`inline: true`、scope `session`），
-在 `menu` 那一路往上爬两层拿到面板容器，把「上下文长度」这一行 `createPortal` 到末尾：
+在 `menu` 那一路往上爬两层拿到面板容器，把「上下文长度」「视觉」两行 `createPortal` 到末尾：
 
 ```
 MenuSurface(role=group)        ← findRowHost() 往上两层
 ├─ button.cell「模型」          ← 座位在它的 .cellValue 里面
 ├─ button.cell「推理等级」
-└─ span.ec-row-slot            ← 插件 portal 进来的第三行 / 展开后是整页选项
+└─ span.ec-row-slot            ← 插件 portal 进来的外壳
+   ├─ button.ec-row[data-row-id=window]「上下文长度」
+   └─ button.ec-row[data-row-id=vision]「视觉」      ← 展开后整壳换成那一项的选项页
 ```
 
-点第三行会发生什么，**照搬宿主的「推理等级」**（`drill("effort")` → `setPane("effort")`，
+点其中一行会发生什么，**照搬宿主的「推理等级」**（`drill("effort")` → `setPane("effort")`，
 见 `model-selection-client.js:1346` / `:1687`）：同一面板里**整页替换**，不是在面板上叠一层浮层。
+组件里的状态是 `page`：`null`（root 页）/ `"window"` / `"vision"`，两行共用同一套换页、Escape、焦点逻辑。
 
 | | 收起（root 页） | 展开（选项页） |
 |---|---|---|
-| 面板里有什么 | 模型 / 推理等级 / 上下文长度 三行 | 只剩上下文选项 |
-| 第三行本身 | `.ec-row`（照抄 `.cell`） | **退场** |
+| 面板里有什么 | 模型 / 推理等级 / 上下文长度 / 视觉 四行 | 只剩被点开那一项的选项 |
+| 插件的两行 | `.ec-row`（照抄 `.cell`） | **全部退场** |
 | 选项行 | — | `.ec-option`（照抄 `.option`） |
 | Escape | 宿主关面板 | **退一级**：收回 root 页（宿主 `back()` 同义） |
+| 上下键 | 在插件两行之间走；走到头不拦，交还宿主 | 在选项间循环 |
 
 换页不是我们的 state：`pane` 是宿主的。插件只给面板加一个 `ec-paging` 类，
 CSS `.ec-paging > [role="menuitem"]{display:none}` 把 root 页那两格藏掉——
@@ -76,7 +107,7 @@ CSS `.ec-paging > [role="menuitem"]{display:none}` 把 root 页那两格藏掉�
 | `placement` | 位置 | 渲染成什么 |
 |---|---|---|
 | `trigger` | 收起的那个按钮 | 只有模型名 |
-| `menu` | 根面板「模型」那一格 | 模型名（填满这一格），外加第三行 |
+| `menu` | 根面板「模型」那一格 | 模型名（填满这一格），外加第三、四行 |
 | `option` | 模型列表的每一行 | 只有模型名——那一行的点击是「选这个模型」，不该挂第二个控件 |
 
 | 项 | 说明 |
@@ -88,8 +119,29 @@ CSS `.ec-paging > [role="menuitem"]{display:none}` 把 root 页那两格藏掉�
 | 「默认」 | 两个字段都 unset，回到 dsh 的默认窗口（`defaultContextWindow` 是可配置的，所以不写死具体值） |
 | 生效 | 立即写官方 settings 文档（`llm-pi-ai` 命名空间），带 revision 校验，无需重启 |
 | 不可写时 | **不渲染控件**，只留一行纯文本 + `title` 说明原因（用户配置层没有该模型的 `models` 数组，或整份设置只读） |
-| 写入失败 | 错误行留在选项页末尾（`.ec-note`），不静默吞掉；失败**不收起**，否则错误跟着选项一起没了 |
-| 焦点 | 展开后落在第一个选项上，收起后回到第三行（宿主 drill 后也是把焦点交给新页第一个 item） |
+| 写入失败 | 错误行留在选项页末尾（`.ec-note`），不静默吞掉；失败**不收起**，否则错误跟着选项一起没了；换页时清掉，不跟到另一项的选项页 |
+| 焦点 | 展开后落在第一个选项上，收起后回到刚才点开的那一行（按 `data-row-id` 找；宿主 drill 后也是把焦点交给新页第一个 item） |
+| 退路 | 认不出面板容器时只回退成「名字 + 窗口灰字」，视觉不进退路——两个「默认」并排只会让人看不懂 |
+
+### 「视觉」这一行
+
+宿主判断能不能发图只看 `model.input.includes("image")`（不含就把图片过滤掉、工具返回的图换成
+`[tool image omitted: model does not support images]`，个别路径直接抛 `UNSUPPORTED_CONTENT`）。
+`model.input` 的来历在 llm-pi-ai 的模型解析里：
+
+```
+input: declaredInput(entry.input) ?? base?.input ?? [...request.defaultInput]
+                      ↑ [] 和不写都返回 undefined     ↑ 官方目录   ↑ provider 的 defaultInput，缺省 ["text"]
+```
+
+| 选项 | 写入 | 为什么 |
+|---|---|---|
+| 默认 | `unset models.<i>.input` | 交回上面那条链。不写 `[]`：语义相同，但删掉更干净，和「上下文长度」的「默认」一致 |
+| 支持 | `set … input = ["text","image"]` | 模态只有 text / image 两种（`MODALITIES`），不能只写 image，否则纯文本请求也不合法 |
+| 不支持 | `set … input = ["text"]` | 官方目录说认图、网关却不认时，用它压回纯文本 |
+
+当前值由 `visionChoiceOf(entry.input)` 判：空或缺省 → 默认，含 image → 支持，否则 → 不支持。
+浏览器半边拿不到官方目录，所以「默认」只代表"没写过"，不显示解析后的真值。
 
 两句容易误解的地方：
 

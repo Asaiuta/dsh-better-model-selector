@@ -47,14 +47,15 @@ const entries = [
     api: 'openai-completions',
     provider: 'moonshotai',
     reasoning: true,
-    thinkingLevelMap: { off: null },
+    // 除 off 外每档都明写 null：这才是官方说「没档位」。只写 off: null 的意思是「关不掉思考」。
+    thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: null },
   },
 ];
 
 test('catalog 模式：按官方档位集重写，未匹配的原样保留', () => {
   const result = syncEfforts({ text: PATCH, entries, mode: 'catalog' });
   assert.equal(result.written, false, 'text 入参只计算不落盘');
-  assert.match(result.text, /reasoningEfforts:\n              'off': null\n              low: low\n              high: high\n              max: max\n/);
+  assert.match(result.text, /reasoningEfforts:\n              low: low\n              high: high\n              max: max\n/, 'off: null 在官方表里是「关不掉」，不写 off');
   assert.match(result.text, /- id: mystery-model\n {12}name: mystery-model\n {12}input: \[\]\n/);
   assert.equal(result.matched, 2);
   assert.equal(result.unmatched, 1);

@@ -1,9 +1,10 @@
 /**
- * 契约：模型选择器里的那个窗口切换器。
+ * 契约：模型选择器里的「上下文长度」与「视觉」两行。
  *
- * 真正会改配置的只有两件事，全部在这里锚住：
+ * 真正会改配置的只有这几件事，全部在这里锚住：
  *   1. 选中某一格 → 只写这一个模型的 contextWindow，maxTokens 仅在超限时跟着压
  *   2. 选中「默认」→ 两个字段都 unset，交回 dsh 的默认窗口
+ *   2'. 视觉：支持 → input: [text, image]；不支持 → input: [text]；默认 → unset input
  *
  * 另外三条是「遵守宿主风格」的可执行形式：
  *   3. 座位是模型选择器**自己声明**的 `conversation.input.model.label`；占了以后
@@ -94,7 +95,7 @@ function hookRuntime() {
 }
 
 const { declaration, exports } = loadModule();
-const { locateWindow, windowOpsOf, defaultOpsOf, chipValueOf, optionsOf, formatTokens, occupantSummary, findRowHost, applyPaging, windowRow, LADDER, LABEL_SEAT, SEAT_ID, LOCALE_NS, SETTINGS_NS, zh, en, createView } = exports.__test;
+const { locateModel, windowOpsOf, defaultOpsOf, chipValueOf, optionsOf, visionChoiceOf, visionOptionsOf, visionOpsOf, formatTokens, occupantSummary, findRowHost, applyPaging, LADDER, VISION_INPUT, LABEL_SEAT, SEAT_ID, LOCALE_NS, SETTINGS_NS, zh, en, createView } = exports.__test;
 
 /** vm 里造出来的数组/对象原型属于另一个 realm，比较前先摊平成纯 JSON。 */
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -132,6 +133,7 @@ const VIEW = {
         models: [
           { id: 'gpt-6.1-sol', contextWindow: 1050000, maxTokens: 128000 },
           { id: 'deepseek-v4-flash' },
+          { id: 'kimi-vl', input: ['text', 'image'] },
         ],
       },
       inherited: {},
@@ -143,6 +145,7 @@ const VIEW = {
         models: [
           { id: 'gpt-6.1-sol', contextWindow: 1050000, maxTokens: 128000 },
           { id: 'deepseek-v4-flash' },
+          { id: 'kimi-vl', input: ['text', 'image'] },
         ],
       },
       inherited: { models: [{ id: 'only-in-base' }] },
@@ -332,11 +335,12 @@ test('设置读不出来时降级成一行错误，不抛给渲染层', async ()
   assert.equal((await missing2.load()).failure, '设置里没有 llm-pi-ai 这一节');
 });
 
-test('locateWindow 从用户层数组取下标，读实际生效的容量', () => {
-  assert.deepEqual(plain(locateWindow(VIEW, 'ziyong', 'gpt-6.1-sol')), { index: 0, contextWindow: 1050000, maxTokens: 128000 });
-  assert.deepEqual(plain(locateWindow(VIEW, 'ziyong', 'deepseek-v4-flash')), { index: 1 });
-  assert.equal(locateWindow(VIEW, 'ziyong', '不存在'), undefined, '模型不在数组里就不写');
-  assert.equal(locateWindow(VIEW, 'inherited', 'only-in-base'), undefined, '用户层没有 models 数组就不能按下标写');
+test('locateModel 从用户层数组取下标，读实际生效的容量与模态', () => {
+  assert.deepEqual(plain(locateModel(VIEW, 'ziyong', 'gpt-6.1-sol')), { index: 0, contextWindow: 1050000, maxTokens: 128000 });
+  assert.deepEqual(plain(locateModel(VIEW, 'ziyong', 'deepseek-v4-flash')), { index: 1 });
+  assert.deepEqual(plain(locateModel(VIEW, 'ziyong', 'kimi-vl')), { index: 2, input: ['text', 'image'] });
+  assert.equal(locateModel(VIEW, 'ziyong', '不存在'), undefined, '模型不在数组里就不写');
+  assert.equal(locateModel(VIEW, 'inherited', 'only-in-base'), undefined, '用户层没有 models 数组就不能按下标写');
 });
 
 test('选中某一格：写 contextWindow，maxTokens 只在超限时跟着压', () => {
@@ -369,6 +373,8 @@ test('ops 的 path 每一项都是 string', () => {
     ...windowOpsOf('ziyong', 0, 262144, 4096),
     ...windowOpsOf('ziyong', 12, 1048576, undefined),
     ...defaultOpsOf('ziyong', 7),
+    ...visionOpsOf('ziyong', 4, 'on'),
+    ...visionOpsOf('ziyong', 5, 'default'),
   ];
   assert.ok(all.length > 0);
   for (const op of all) {
@@ -414,6 +420,30 @@ test('梯子全是 2 的幂，且从 262K 起——更小的窗口没有意义',
   for (const value of LADDER) assert.equal(Math.log2(value) % 1, 0, `${value} 不是 2 的幂`);
 });
 
+test('视觉：空数组与不写同义，都是「默认」；写了就看有没有 image', () => {
+  // 宿主 `declaredInput`：`[]` 与缺省都当「没表态」，往官方目录 / defaultInput 问下去。
+  assert.equal(visionChoiceOf(undefined), 'default');
+  assert.equal(visionChoiceOf([]), 'default');
+  assert.equal(visionChoiceOf(['text', 'image']), 'on');
+  assert.equal(visionChoiceOf(['image']), 'on');
+  assert.equal(visionChoiceOf(['text']), 'off');
+  assert.deepEqual(plain(visionOptionsOf(t)), [
+    { id: 'default', label: '默认' },
+    { id: 'on', label: '支持' },
+    { id: 'off', label: '不支持' },
+  ]);
+});
+
+test('视觉的写入计划：支持 / 不支持写 input，默认 unset', () => {
+  const path = ['providers', 'ziyong', 'models', '2', 'input'];
+  assert.deepEqual(plain(visionOpsOf('ziyong', 2, 'on')), [{ op: 'set', path, value: ['text', 'image'] }]);
+  assert.deepEqual(plain(visionOpsOf('ziyong', 2, 'off')), [{ op: 'set', path, value: ['text'] }]);
+  assert.deepEqual(plain(visionOpsOf('ziyong', 2, 'default')), [{ op: 'unset', path }], '默认是交回去，不是写 []');
+  // 写出去的数组是副本：选项页再点一次不能把常量改掉。
+  visionOpsOf('ziyong', 2, 'on')[0].value.push('audio');
+  assert.deepEqual(plain(VISION_INPUT.on), ['text', 'image']);
+});
+
 //#region 渲染层：座位被占以后模型名由我们负责，第三行挂进宿主面板
 /** 有状态的微型 hook 运行时：setState 之后重跑一次组件函数就能看到新状态。 */
 const hookState = { slots: [], index: 0 };
@@ -449,7 +479,7 @@ function mount(props) {
 }
 
 /**
- * 渲染出「第三行」那一路：`host` 是组件里第 4 个 useState（open / failure / busy / host），
+ * 渲染出「挂进面板」那一路：`host` 是组件里第 4 个 useState（page / failure / busy / host），
  * 预置它就不必去伪造 DOM 与 effect。
  */
 function mountInPanel(props) {
@@ -457,21 +487,21 @@ function mountInPanel(props) {
   return mount(props);
 }
 
-/** 第三行那层外壳（含展开出来的选项）。 */
+/** 插件那几行的外壳（含展开出来的选项）。 */
 const shellOf = (node) => findAll(node, (n) => n.props.className === 'ec-row-slot')[0];
 
-/** 第三行本身（收起态时外壳里只有它一个 button）。 */
-const headOf = (node) => findAll(shellOf(node), (n) => n.type === 'button')[0];
+/** 收起态里的某一行：默认是第三行「上下文长度」。 */
+const headOf = (node, rowId = 'window') => findAll(shellOf(node), (n) => n.type === 'button' && n.props['data-row-id'] === rowId)[0];
 
-/** 点一下第三行把它展开（hookState 会记住 open=true，重放一次就能看到选项）。 */
-function expandRow(props) {
-  headOf(mountInPanel(props)).props.onClick();
+/** 点一下某一行把它展开（hookState 会记住 page，重放一次就能看到选项）。 */
+function expandRow(props, rowId = 'window') {
+  headOf(mountInPanel(props), rowId).props.onClick();
   return mountInPanel(props);
 }
 
 /** 展开 → 点某一格 → 等写入落地，返回重新渲染后的树。 */
-async function pickOption(props, id) {
-  const opened = expandRow(props);
+async function pickOption(props, id, rowId = 'window') {
+  const opened = expandRow(props, rowId);
   const option = findAll(opened, (n) => n.props['data-option-id'] === id)[0];
   assert.ok(option !== undefined, `展开后没有 ${id} 这一格`);
   option.props.onClick();
@@ -493,6 +523,7 @@ const settle = async () => {
 
 const SOL = { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' };
 const FLASH = { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' };
+const KIMI = { id: 'kimi-vl', name: 'Kimi VL' };
 const PROVIDER = { id: 'ziyong', name: 'ziyong' };
 const NOOP_SETTINGS = { mutate: async () => ({ ok: true }) };
 
@@ -546,6 +577,15 @@ test('第三行挂在面板末尾：标签 + 当前值 + 箭头（收起态）',
   assert.equal(head.props.disabled, undefined, '可写就是能点的');
   assert.equal(findAll(node, (n) => n.props.className === 'ec-option').length, 0, '收起时整页只有这一行');
   assert.equal(findAll(node, (n) => n.type === fakeMenu).length, 0, '不用浮层菜单');
+
+  const rows = findAll(shellOf(node), (n) => n.type === 'button');
+  assert.deepEqual(plain(rows.map((row) => row.props['data-row-id'])), ['window', 'vision'], '上下文长度下面紧跟视觉，同一层外壳');
+  const vision = rows[1];
+  assert.equal(vision.props.className, 'ec-row', '视觉那一行和第三行同一套样式');
+  assert.equal(textOf(vision), '视觉默认', '没写过 input 就是默认');
+  assert.equal(vision.props['aria-label'], 'GPT-6.1 Sol 是否支持视觉，当前 默认');
+  assert.equal(vision.props['aria-expanded'], false);
+  assert.equal(findAll(vision, (n) => n.type === fakeChevron).length, 1);
 });
 
 test('面板容器靠 ref 回调在 commit 阶段拿到，不等 effect', async () => {
@@ -617,19 +657,22 @@ test('换页靠给宿主面板加一个类，收起或卸载一定摘掉', async
   assert.equal(classes.size, 0, '认不出的面板不许抛');
 });
 
+/** 直接喂给 panelRows 的两行描述。 */
+const ROWS = [
+  { id: 'window', label: '上下文长度', value: '1.1M', aria: 'GPT-6.1 Sol 的上下文长度，当前 1.1M', reason: '这个模型不在用户配置层，改不了上下文', options: optionsOf(1050000, t), selectedId: '1050000' },
+  { id: 'vision', label: '视觉', value: '默认', aria: 'GPT-6.1 Sol 是否支持视觉，当前 默认', reason: '这个模型不在用户配置层，改不了视觉', options: visionOptionsOf(t), selectedId: 'default' },
+];
+
 test('Escape 是退一级（收起列表），不是关面板', async () => {
-  let toggles = 0;
-  const shell = rendered.__test.windowRow({
+  const pages = [];
+  const shell = rendered.__test.panelRows({
     t,
-    name: 'GPT-6.1 Sol',
-    value: '1.1M',
-    size: 1050000,
+    rows: ROWS,
     editable: true,
-    reason: undefined,
-    open: true,
+    page: 'vision',
     failure: undefined,
     busy: false,
-    onToggle: () => void (toggles += 1),
+    onPage: (next) => void pages.push(next),
     onSelect: () => {},
   });
 
@@ -638,12 +681,17 @@ test('Escape 是退一级（收起列表），不是关面板', async () => {
   const event = (key) => ({ key, stopPropagation: () => void (stopped += 1), preventDefault: () => void (prevented += 1) });
 
   shell.props.onKeyDown(event('Escape'));
-  assert.equal(toggles, 1, 'Escape 收回 root 页');
+  assert.deepEqual(pages, [null], 'Escape 收回 root 页');
   assert.equal(stopped, 1, '别再漏给宿主——它会把整个面板关掉');
   assert.equal(prevented, 1);
 
   shell.props.onKeyDown(event('a'));
-  assert.equal(toggles, 1, '别的键不管');
+  assert.equal(pages.length, 1, '别的键不管');
+
+  const collapsed = rendered.__test.panelRows({ t, rows: ROWS, editable: true, page: null, onPage: (next) => void pages.push(next), onSelect: () => {} });
+  collapsed.props.onKeyDown(event('Escape'));
+  assert.equal(pages.length, 1, '收起时 Escape 归宿主（关面板），不拦');
+  assert.equal(stopped, 1);
 });
 
 test('模型名保持可点：拦截不许挂在座位那一层', async () => {
@@ -683,27 +731,22 @@ test('第三行的手势拦在自己的外壳上——展开的选项也算在�
   assert.equal(findAll(shell, (n) => n.props['data-option-id'] !== undefined).length, 6, '六格选项都在壳里');
 });
 
-test('改不了时第三行只是一行字：没有选项、没有箭头、原因进 title', async () => {
+test('改不了时每一项只是一行字：没有选项、没有箭头、各自的原因进 title', async () => {
   // 元素树要用会记录 createElement 的那个实例，默认 stub 一律返回 null。
-  const row = rendered.__test.windowRow({
-    t,
-    name: 'Only In Base',
-    value: '默认',
-    size: undefined,
-    editable: false,
-    reason: '这个模型不在用户配置层，改不了上下文',
-    open: false,
-    failure: undefined,
-    onToggle: () => {},
-    onSelect: () => {},
-  });
-  assert.equal(row.type, 'button');
-  assert.equal(row.props.disabled, true);
-  assert.equal(row.props.className, 'ec-row');
-  assert.equal(row.props.title, '这个模型不在用户配置层，改不了上下文');
-  assert.equal(findAll(row, (n) => n.props['data-option-id'] !== undefined).length, 0, '不适用就不给选项');
-  assert.equal(findAll(row, (n) => n.type === fakeChevron).length, 0, '不给箭头——那一行不能点开');
-  assert.equal(textOf(row), '上下文长度默认');
+  const shell = rendered.__test.panelRows({ t, rows: ROWS, editable: false, page: null, onPage: () => {}, onSelect: () => {} });
+  const rows = findAll(shell, (n) => n.type === 'button');
+  assert.deepEqual(plain(rows.map((row) => row.props['data-row-id'])), ['window', 'vision']);
+  for (const row of rows) {
+    assert.equal(row.props.disabled, true);
+    assert.equal(row.props.className, 'ec-row');
+    assert.equal(row.props.onClick, undefined, '死行不挂点击');
+  }
+  assert.equal(rows[0].props.title, '这个模型不在用户配置层，改不了上下文');
+  assert.equal(rows[1].props.title, '这个模型不在用户配置层，改不了视觉');
+  assert.equal(findAll(shell, (n) => n.props['data-option-id'] !== undefined).length, 0, '不适用就不给选项');
+  assert.equal(findAll(shell, (n) => n.type === fakeChevron).length, 0, '不给箭头——那一行不能点开');
+  assert.equal(textOf(rows[0]), '上下文长度1.1M');
+  assert.equal(textOf(rows[1]), '视觉默认');
 });
 
 test('findRowHost：从座位往上两层找面板容器', () => {
@@ -799,5 +842,68 @@ test('没设过窗口的模型：第三行显示默认，选中梯子下发 set'
   assert.deepEqual(plain(written[0]), [
     { op: 'set', path: ['providers', 'ziyong', 'models', '1', 'contextWindow'], value: 524288 },
   ]);
+});
+
+test('展开视觉：整页只剩 默认 / 支持 / 不支持，当前值打勾', async () => {
+  resetHooks();
+  const view = await readiedView();
+  const props = { provider: PROVIDER, model: KIMI, placement: 'menu', settings: NOOP_SETTINGS, view, t };
+
+  assert.equal(textOf(headOf(mountInPanel(props), 'vision')), '视觉支持', '写了 image 就是支持');
+
+  const node = expandRow(props, 'vision');
+  assert.equal(findAll(node, (n) => n.props.className === 'ec-row').length, 0, '换页后两行都退场');
+  const options = findAll(node, (n) => n.props['data-option-id'] !== undefined);
+  assert.deepEqual(plain(options.map((row) => row.props['data-option-id'])), ['default', 'on', 'off']);
+  assert.deepEqual(plain(options.map((row) => textOf(row))), ['默认', '支持', '不支持']);
+  assert.equal(options.every((row) => row.props.className === 'ec-option' && row.props.role === 'menuitemradio'), true);
+  const checked = options.filter((row) => row.props['aria-checked'] === true);
+  assert.deepEqual(plain(checked.map((row) => row.props['data-option-id'])), ['on']);
+  assert.ok(findAll(shellOf(node), (n) => n.props['data-option-id'] !== undefined).length === 3, '选项在拦手势的壳里');
+});
+
+test('视觉选「支持」：只写这一个模型的 input，成功后收起', async () => {
+  resetHooks();
+  const view = await readiedView();
+  const written = [];
+  const settings = { mutate: async (ns, ops, revision) => void written.push({ ns, ops, revision }) ?? { ok: true } };
+  const props = { provider: PROVIDER, model: FLASH, placement: 'menu', settings, view, t };
+
+  const after = await pickOption(props, 'on', 'vision');
+  assert.deepEqual(plain(written), [
+    { ns: 'llm-pi-ai', revision: 3, ops: [{ op: 'set', path: ['providers', 'ziyong', 'models', '1', 'input'], value: ['text', 'image'] }] },
+  ]);
+  assert.equal(headOf(after, 'vision').props['aria-expanded'], false, '成功就收起');
+});
+
+test('视觉选「不支持」/「默认」：分别写 ["text"] 与 unset', async () => {
+  resetHooks();
+  const view = await readiedView();
+  const written = [];
+  const settings = { mutate: async (ns, ops) => void written.push(ops) ?? { ok: true } };
+  const props = { provider: PROVIDER, model: KIMI, placement: 'menu', settings, view, t };
+
+  await pickOption(props, 'off', 'vision');
+  await pickOption(props, 'default', 'vision');
+  assert.deepEqual(plain(written), [
+    [{ op: 'set', path: ['providers', 'ziyong', 'models', '2', 'input'], value: ['text'] }],
+    [{ op: 'unset', path: ['providers', 'ziyong', 'models', '2', 'input'] }],
+  ]);
+});
+
+test('视觉写入失败：错误留在视觉页；换到别的页就不再带着', async () => {
+  resetHooks();
+  const view = await readiedView();
+  const settings = { mutate: async () => ({ ok: false, error: { message: '配置已被别处改动' } }) };
+  const props = { provider: PROVIDER, model: SOL, placement: 'menu', settings, view, t };
+
+  const after = await pickOption(props, 'on', 'vision');
+  assert.equal(textOf(findAll(after, (n) => n.props.className === 'ec-note')[0]), '写入失败：配置已被别处改动');
+  assert.equal(findAll(after, (n) => n.props['data-option-id'] !== undefined).length, 3, '失败留在视觉页');
+
+  // Escape 退回 root 页，再进上下文长度：上一页的错误不该跟过来。
+  shellOf(after).props.onKeyDown({ key: 'Escape', stopPropagation() {}, preventDefault() {} });
+  const window = expandRow(props, 'window');
+  assert.equal(findAll(window, (n) => n.props.className === 'ec-note').length, 0);
 });
 //#endregion
