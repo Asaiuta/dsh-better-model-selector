@@ -63,6 +63,7 @@ pnpm add git+https://github.com/Asaiuta/dsh-better-model-selector.git
 ```
 
 本地改代码调试时换成 `pnpm add link:/path/to/dsh-better-model-selector`。
+想锁版本就在地址后面加 tag：`pnpm add git+https://github.com/Asaiuta/dsh-better-model-selector.git#v0.2.0`。
 
 > 本插件**没有发布到 npm**：`dsh-better-model-selector` 这个名字在 npm 上已经属于另一个
 > 同领域但实现不同的插件（[Khellendros97/dsh-better-model-selector](https://github.com/Khellendros97/dsh-better-model-selector)），
