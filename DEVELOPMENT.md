@@ -37,6 +37,11 @@
 命令行参数（桌面版用 `electron host.js <app.asar> …` 起宿主进程，asar 就在 argv 里）>
 可执行文件旁边的 `resources/app.asar` > 工作目录往上找。都不中才停用，并把试过的位置打进日志。
 
+**读 asar 本体必须用 `original-fs`。** 宿主是 `DSH NEXT.exe` 以 run-as-node 跑的，它的 `node:fs`
+带 Electron 的 asar 补丁：`statSync(app.asar).isFile()` 是 `false`（被当成目录），`openSync` 抛 ENOENT。
+用纯 Node 跑测试完全看不出来——这个坑曾让插件每次启动都「找不到 app.asar」、静默停用。
+`lib/catalog.mjs` 里的 `rawFs` 在 Electron 下取 `original-fs`，纯 Node 下退回 `node:fs`。
+
 ## 官方表 → 配置：两边对「没写」的解释相反
 
 这是最容易抄错的地方（0.1.0 就抄错了：Claude 只剩 `xhigh` / `max` 两档，`gpt-5` 被判成没档位）。
@@ -227,6 +232,7 @@ node bin/sync.mjs --patch <...> --demote                           # 官方说�
 ```sh
 npm test                                        # 全部契约测试
 DSH_ASAR_PATH=<...>/resources/app.asar npm test # 额外跑数据源冒烟测试，默认跳过的两条会跑起来
+# 再加 DSH_ELECTRON_EXE=<...>/DSH NEXT.exe：用宿主同一个 Electron 二进制读目录，只有这条能抓到 asar fs 补丁的坑
 ```
 
 客户端 `lib/client.js` 是浏览器 IIFE（`window.__ModuleLoader__`），测试用 `vm` 造一个假宿主加载它，

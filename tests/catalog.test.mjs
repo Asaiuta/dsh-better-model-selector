@@ -5,6 +5,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { asarCandidates, resolveAsarPath, loadCatalogEntries } from '../lib/catalog.mjs';
 
 test('asar 候选：桌面版的命令行里带 asar，两种写法都要认', () => {
@@ -47,7 +50,14 @@ test('asar 候选：什么都没给就是空列表，不编路径', () => {
 });
 
 test('找不到 asar 时 resolveAsarPath 返回 undefined，由调用方决定降级', () => {
-  assert.equal(resolveAsarPath('D:/definitely/not/here/app.asar'), undefined);
+  // DSH_ASAR_PATH 是更低一级的候选，跑数据源用例时会被设上，这里必须摘掉。
+  const saved = process.env.DSH_ASAR_PATH;
+  delete process.env.DSH_ASAR_PATH;
+  try {
+    assert.equal(resolveAsarPath('D:/definitely/not/here/app.asar'), undefined);
+  } finally {
+    if (saved !== undefined) process.env.DSH_ASAR_PATH = saved;
+  }
 });
 
 test('能找到本机的 app.asar，并读出上千条官方模型', (t) => {
@@ -65,6 +75,40 @@ test('能找到本机的 app.asar，并读出上千条官方模型', (t) => {
 
   const flash = entries.find((entry) => entry.id === 'deepseek-v4-flash');
   assert.ok(flash, 'deepseek-v4-flash 应该在目录里');
+});
+
+test('Electron 运行时里也能读 asar（宿主的 fs 补丁把 app.asar 当目录）', (t) => {
+  const electron = process.env.DSH_ELECTRON_EXE;
+  const asarPath = resolveAsarPath();
+  if (!electron || !asarPath) {
+    t.skip('需要 DSH_ELECTRON_EXE 与 DSH_ASAR_PATH');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'better-selector-'));
+  try {
+    const output = path.join(dir, 'result.json');
+    const script = path.join(dir, 'probe.mjs');
+    const catalogUrl = new URL('../lib/catalog.mjs', import.meta.url).href;
+    // GUI 子系统的 exe 不保证 stdout 可读，结果走文件。
+    fs.writeFileSync(script, [
+      `import { writeFileSync } from 'node:fs';`,
+      `import { resolveAsarPath, loadCatalogEntries } from ${JSON.stringify(catalogUrl)};`,
+      `const found = resolveAsarPath(${JSON.stringify(asarPath)});`,
+      `const { entries } = loadCatalogEntries({ asarPath: found });`,
+      `writeFileSync(${JSON.stringify(output)}, JSON.stringify({ electron: process.versions.electron, found, count: entries.length }));`,
+    ].join('\n'));
+    const run = spawnSync(electron, [script], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      timeout: 30000,
+    });
+    assert.equal(run.status, 0, String(run.stderr));
+    const result = JSON.parse(fs.readFileSync(output, 'utf8'));
+    assert.ok(result.electron, '必须真的跑在 Electron 里，否则这条用例什么也没证明');
+    assert.equal(result.found, asarPath);
+    assert.ok(result.count > 800, `只读到 ${result.count} 条`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('目录里每条带档位表的记录都只含合法的档位键', (t) => {
